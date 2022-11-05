@@ -1,10 +1,13 @@
-use std::slice::Iter;
+use std::iter::Sum;
+use std::slice::{Iter, IterMut};
 use std::vec::IntoIter;
 use num::Num;
 
+pub mod stats;
+
 // Abstract generic which every tensor item must satisfy
-pub trait TensorItem: Num + Copy + {}
-impl<T: Num + Copy> TensorItem for T {}
+pub trait TensorItem: Num + Copy + Sum + {}
+impl<T: Num + Copy + Sum> TensorItem for T {}
 
 #[derive(PartialEq, Debug)]
 pub struct Tensor<T: TensorItem> {
@@ -12,28 +15,46 @@ pub struct Tensor<T: TensorItem> {
 }
 
 impl<T: TensorItem> Tensor<T> {
+
+    /// Create a new empty Tensor
     pub fn new() -> Self {
         Self { data: Vec::new() }
     }
 
-    pub fn from(v: Vec<T>) -> Self {
-        Self { data: v }
-    }
-
+    /// Gets the underlying Vec data from the tensor. This will consume the Tensor
     pub fn get_data(self) -> Vec<T> {
         self.data
     }
 
+    /// Returns the length of the Tensor, i.e. the number of elements in the Tensor
     pub fn len(&self) -> usize {
         self.data.len()
     }
 
+    /// Iterate over the element of the Tensor
     pub fn iter(&self) -> Iter<'_, T> {
         self.data.iter()
     }
 }
 
-// Iterator Implementations
+/// Implements the From trait to initialize a Tensor from a Vec of the same type
+impl<T: TensorItem> From<Vec<T>> for Tensor<T> {
+    fn from(v: Vec<T>) -> Self {
+        Self { data: v }
+    }
+}
+
+/// Implements the IntoIterator trait for a Tensor
+impl<T: TensorItem> IntoIterator for Tensor<T> {
+    type Item = T;
+    type IntoIter = IntoIter<Self::Item>;
+
+    fn into_iter(self) -> Self::IntoIter {
+        self.data.into_iter()
+    }
+}
+
+/// Implements the IntoIterator trait for reference to a Tensor
 impl<'a, T: TensorItem> IntoIterator for &'a Tensor<T> {
     type Item = &'a T;
     type IntoIter = Iter<'a, T>;
@@ -43,14 +64,25 @@ impl<'a, T: TensorItem> IntoIterator for &'a Tensor<T> {
     }
 }
 
-impl<T: TensorItem> IntoIterator for Tensor<T> {
-    type Item = T;
-    type IntoIter = IntoIter<Self::Item>;
+/// Implements the IntoIterator trait for reference to a mutable Tensor
+impl<'a, T: TensorItem> IntoIterator for &'a mut Tensor<T> {
+    type Item = &'a mut T;
+    type IntoIter = IterMut<'a, T>;
 
-    fn into_iter(self) -> Self::IntoIter {
-        self.data.into_iter()
+    fn into_iter(self) -> IterMut<'a, T> {
+        (&mut self.data).into_iter()
     }
 }
+
+#[allow(unused_macros)]
+mod types {
+    macro_rules! all_types {
+        () => {
+            u8, u16, u32, u64, u128, i8, i16, i32, i64, i128, f32, f64, usize, isize
+        };
+    }
+}
+
 
 #[cfg(test)]
 mod tests {
@@ -75,7 +107,7 @@ mod tests {
             sum += j
         }
 
-        assert_eq!(28., sum);
+        assert_eq!(3.*14., sum);
     }
 
     #[test]
@@ -95,12 +127,16 @@ mod tests {
     }
 
     #[test]
-    fn from_vector_test() {
+    fn from_test() {
         let t1 = Tensor::from(vec![1, 2, 3, 4]);
         let t2 = Tensor{data: vec![1, 2, 3, 4]};
         assert_eq!(t1, t2);
 
         let t1 = Tensor::from(vec![1., 2., 3., 4.]);
+        let t2 = Tensor{data: vec![1., 2., 3., 4.]};
+        assert_eq!(t1, t2);
+
+        let t1: Tensor<f32> = vec![1., 2., 3., 4.].into();
         let t2 = Tensor{data: vec![1., 2., 3., 4.]};
         assert_eq!(t1, t2);
     }
@@ -111,181 +147,207 @@ mod operators {
     use std::ops::{Add, Mul, Sub, Div, Rem};
     use crate::{TensorItem, Tensor};
 
-    impl<T: TensorItem> Mul for &Tensor<T> {
-        type Output = Tensor<T>;
+    /// Given a operator, implement the operation with a scalar T and a Tensor<T>
+    /// for the following combinations:
+    /// T OP Tensor<T>
+    /// Tensor<T> OP T
+    /// T OP &Tensor<T>
+    /// &Tensor<T> OP T
+    macro_rules! impl_op_tens_sca {
+        ($trait:ident, $trait_fn:ident, $scalar_type:path) => {
+            /// Implements the $trait operator trait for $scalar_type and &Tensor
+            impl $trait<$scalar_type> for &Tensor<$scalar_type> {
+                type Output = Tensor<$scalar_type>;
 
-        fn mul(self, other: Self) -> Self::Output {
-            let data: Vec<T> = self.iter().zip(other.iter()).map(|(x, y)| *x * *y).collect();
-            Tensor { data }
-        }
+                fn $trait_fn(self, other: $scalar_type) -> Self::Output {
+                    let data: Vec<$scalar_type> = self.into_iter().map(|x| (*x).$trait_fn(other)).collect();
+                    Tensor { data }
+                }
+            }
+
+            /// Implements the $trait operator trait for $scalar_type and Tensor
+            impl $trait<$scalar_type> for Tensor<$scalar_type> {
+                type Output = Tensor<$scalar_type>;
+
+                fn $trait_fn(self, other: $scalar_type) -> Self::Output {
+                    let data: Vec<$scalar_type> = self.into_iter().map(|x| x.$trait_fn(other)).collect();
+                    Tensor { data }
+                }
+            }
+
+            /// Implements the $trait operator trait for &Tensor and $scalar_type
+            impl $trait<&Tensor<$scalar_type>> for $scalar_type {
+                type Output = Tensor<$scalar_type>;
+
+                fn $trait_fn(self, other: &Tensor<$scalar_type>) -> Self::Output {
+                    let data: Vec<$scalar_type> = other.into_iter().map(|x| self.$trait_fn(*x)).collect();
+                    Tensor { data }
+                }
+            }
+
+            /// Implements the $trait operator trait for Tensor and $scalar_type
+            impl $trait<Tensor<$scalar_type>> for $scalar_type {
+                type Output = Tensor<$scalar_type>;
+
+                fn $trait_fn(self, other: Tensor<$scalar_type>) -> Self::Output {
+                    let data: Vec<$scalar_type> = other.into_iter().map(|x| self.$trait_fn(x)).collect();
+                    Tensor { data }
+                }
+            }
+        };
     }
 
-    impl<T: TensorItem> Mul for Tensor<T> {
-        type Output = Self;
+    /// Implements the macro impl_op_tens_sca for all relevant types
+    /// TODO: Change to use the `all_types` macro
+    macro_rules! impl_op_tens_sca_all {
+        ($trait:ident, $trait_fn:ident) => {
+            impl_op_tens_sca!($trait, $trait_fn, u8);
+            impl_op_tens_sca!($trait, $trait_fn, u16);
+            impl_op_tens_sca!($trait, $trait_fn, u32);
+            impl_op_tens_sca!($trait, $trait_fn, u64);
+            impl_op_tens_sca!($trait, $trait_fn, u128);
 
-        fn mul(self, other: Self) -> Self {
-            let data: Vec<T> = self.into_iter().zip(other.into_iter()).map(|(x, y)| x * y).collect();
-            Tensor { data }
-        }
+            impl_op_tens_sca!($trait, $trait_fn, i8);
+            impl_op_tens_sca!($trait, $trait_fn, i16);
+            impl_op_tens_sca!($trait, $trait_fn, i32);
+            impl_op_tens_sca!($trait, $trait_fn, i64);
+            impl_op_tens_sca!($trait, $trait_fn, i128);
+
+            impl_op_tens_sca!($trait, $trait_fn, f32);
+            impl_op_tens_sca!($trait, $trait_fn, f64);
+
+            impl_op_tens_sca!($trait, $trait_fn, usize);
+            impl_op_tens_sca!($trait, $trait_fn, isize);
+        };
     }
 
-    impl<T: TensorItem> Rem for Tensor<T> {
-        type Output = Self;
 
-        fn rem(self, other: Self) -> Self {
-            let data: Vec<T> = self.into_iter().zip(other.into_iter()).map(|(x, y)| x % y).collect();
-            Tensor { data }
-        }
+    /// Given a operator trait (e.g. Mul) and its associated op function
+    /// (e.g. mul) will implement the operator for the Tensor for all
+    /// combinations of Tensor<T> and &Tensor<T>:
+    /// - &Tensor, &Tensor
+    /// - Tensor , &Tensor
+    /// - &Tensor, Tensor
+    /// - Tensor , Tensor
+    macro_rules! impl_op_tens_tens {
+        ($trait:ident, $trait_fn:ident) => {
+            // &Tensor, &Tensor
+            impl<T: TensorItem> $trait for &Tensor<T> {
+                type Output = Tensor<T>;
+
+                fn $trait_fn(self, other: Self) -> Self::Output {
+                    let data: Vec<T> = self.into_iter().zip(other.into_iter()).map(|(x, y)| (*x).$trait_fn(*y)).collect();
+                    Tensor { data }
+                }
+            }
+
+            // &Tensor, Tensor
+            impl<T: TensorItem> $trait<Tensor<T>> for &Tensor<T> {
+                type Output = Tensor<T>;
+
+                fn $trait_fn(self, other: Tensor<T>) -> Self::Output {
+                    let data: Vec<T> = self.into_iter().zip(other.into_iter()).map(|(x, y)| (*x).$trait_fn(y)).collect();
+                    Tensor { data }
+                }
+            }
+
+            // Tensor, &Tensor
+            impl<T: TensorItem> $trait<&Tensor<T>> for Tensor<T> {
+                type Output = Tensor<T>;
+
+                fn $trait_fn(self, other: &Tensor<T>) -> Self::Output {
+                    let data: Vec<T> = self.into_iter().zip(other.into_iter()).map(|(x, y)| x.$trait_fn(*y)).collect();
+                    Tensor { data }
+                }
+            }
+
+            // Tensor, Tensor
+            impl<T: TensorItem> $trait for Tensor<T> {
+                type Output = Self;
+
+                fn $trait_fn(self, other: Self) -> Self {
+                    let data: Vec<T> = self.into_iter().zip(other.into_iter()).map(|(x, y)| x.$trait_fn(y)).collect();
+                    Tensor { data }
+                }
+            }
+        };
     }
 
-
-    impl<T: TensorItem> Div for Tensor<T> {
-        type Output = Self;
-
-        fn div(self, other: Self) -> Self {
-            let data: Vec<T> = self.into_iter().zip(other.into_iter()).map(|(x, y)| x / y).collect();
-            Tensor { data }
-        }
+    /// Macro to implement the operator for all Tensor x Tensor and
+    /// Tensor x Scalar combinations (mostly convenience)
+    macro_rules! impl_op_tens {
+        ($trait:ident, $trait_fn:ident) => {
+            impl_op_tens_tens!($trait, $trait_fn);
+            impl_op_tens_sca_all!($trait, $trait_fn);
+        };
     }
 
-    impl<T: TensorItem> Add for Tensor<T> {
-        type Output = Self;
-
-        fn add(self, other: Self) -> Self {
-            let data: Vec<T> = self.into_iter().zip(other.into_iter()).map(|(x, y)| x + y).collect();
-            Tensor { data }
-        }
-    }
-
-    impl<T: TensorItem> Sub<T> for &Tensor<T> {
-        type Output = Tensor<T>;
-
-        fn sub(self, other: T) -> Self::Output {
-            let data: Vec<T> = self.into_iter().map(|x| *x - other).collect();
-            Tensor { data }
-        }
-    }
-
-    impl<T: TensorItem> Sub<T> for Tensor<T> {
-        type Output = Tensor<T>;
-
-        fn sub(self, other: T) -> Self::Output {
-            let data: Vec<T> = self.into_iter().map(|x| x - other).collect();
-            Tensor { data }
-        }
-    }
-
-    impl<T: TensorItem> Sub for Tensor<T> {
-        type Output = Self;
-
-        fn sub(self, other: Self) -> Self {
-            let data: Vec<T> = self.into_iter().zip(other.into_iter()).map(|(x, y)| x - y).collect();
-            Tensor { data }
-        }
-    }
+    impl_op_tens!(Mul, mul);
+    impl_op_tens!(Div, div);
+    impl_op_tens!(Rem, rem);
+    impl_op_tens!(Add, add);
+    impl_op_tens!(Sub, sub);
 
     #[cfg(test)]
     mod tests {
         use super::*;
 
-        #[test]
-        fn add_int_test() {
-            let t1 = Tensor{data: vec![1, 2, 3]};
-            let t2 = Tensor{data: vec![1, 1, -1]};
-
-            let add = t1 + t2;
-            let expect  = Tensor{data: vec![2, 3, 2]};
-            assert_eq!(expect, add);
+        // Basic tests in the form of:
+        // t1 OP t2 == expected
+        macro_rules! test_op_basic {
+            ($name:ident, $trait_op:ident, $t1:expr, $t2:expr, $expected:expr) => {
+                #[test]
+                fn $name() {
+                    let t1 = Tensor::from($t1);
+                    let t2 = Tensor::from($t2);
+                    let expected = Tensor::from($expected);
+                    assert_eq!(expected, t1.$trait_op(t2));
+                }
+            };
         }
 
-        #[test]
-        fn add_float_test() {
-            let t1 = Tensor{data: vec![1.0, 2.0, 3.0]};
-            let t2 = Tensor{data: vec![1.0, 1.0, -1.0]};
+        test_op_basic!(add_int, add, vec![1, 2, 3], vec![1, 1, -1], vec![2, 3, 2]);
+        test_op_basic!(add_float, add, vec![1.0, 2.0, 3.0], vec![1.0, 1.0, -1.0], vec![2.0, 3.0, 2.0]);
 
-            let add = t1 + t2;
-            let expect  = Tensor{data: vec![2.0, 3.0, 2.0]};
-            assert_eq!(expect, add);
-        }
+        test_op_basic!(sub_int, sub, vec![1, 2, 3], vec![1, 1, -1], vec![0, 1, 4]);
+        test_op_basic!(sub_float, sub, vec![1.0, 2.0, 3.0], vec![1.0, 1.0, -1.0], vec![0.0, 1.0, 4.0]);
 
-        #[test]
-        fn sub_int_test() {
-            let t1 = Tensor{data: vec![1, 2, 3]};
-            let t2 = Tensor{data: vec![1, 1, -1]};
+        test_op_basic!(mul_int, mul, vec![1, 2, 3], vec![1, 2, 3], vec![1, 4, 9]);
+        test_op_basic!(mul_float, mul, vec![1.0, 2.0, 3.0], vec![2.0, 0.5, 3.0], vec![2.0, 1.0, 9.0]);
 
-            let sub = t1 - t2;
-            let expect  = Tensor{data: vec![0, 1, 4]};
-            assert_eq!(expect, sub);
-        }
+        test_op_basic!(rem_int, rem, vec![3, 4, 7], vec![2, 2, 7], vec![1, 0, 0]);
+        test_op_basic!(rem_float, rem, vec![3.0, 4.0, 7.0], vec![2.0, 2.0, 7.0], vec![1.0, 0.0, 0.0]);
+
+        test_op_basic!(div_int, div, vec![3, 4, 7], vec![2, 2, 7], vec![1, 2, 1]);
+        test_op_basic!(div_float, div, vec![3.0, 4.0, 7.0], vec![2.0, 2.0, 7.0], vec![1.5, 2.0, 1.0]);
 
         #[test]
-        fn sub_float_test() {
-            let t1 = Tensor{data: vec![1.0, 2.0, 3.0]};
-            let t2 = Tensor{data: vec![1.0, 1.0, -1.0]};
-
-            let sub = t1 - t2;
-            let expect  = Tensor{data: vec![0.0, 1.0, 4.0]};
-            assert_eq!(expect, sub);
-        }
-
-        #[test]
-        fn mul_float_test() {
-            let t1 = Tensor{data: vec![1.0, 2.0, 3.0]};
-            let t2 = Tensor{data: vec![2.0, 0.5, 3.0]};
-
-            let mul = t1 * t2;
-            let expect  = Tensor{data: vec![2.0, 1.0, 9.0]};
-            assert_eq!(expect, mul);
-        }
-
-        #[test]
-        fn mul_int_test() {
-            let t1 = Tensor{data: vec![1, 2, 3]};
-            let t2 = Tensor{data: vec![1, 2, 3]};
-
-            let mul = t1 * t2;
-            let expect  = Tensor{data: vec![1, 4, 9]};
-            assert_eq!(expect, mul);
-        }
-
-        #[test]
-        fn rem_int_test() {
-            let t1 = Tensor{data: vec![3, 4, 7]};
-            let t2 = Tensor{data: vec![2, 2, 7]};
-
-            let rem = t1 % t2;
-            let expect  = Tensor{data: vec![1, 0, 0]};
-            assert_eq!(expect, rem);
-        }
-
-        #[test]
-        fn rem_float_test() {
+        fn mul_op_ref_combinations_tens_tens_test() {
             let t1 = Tensor{data: vec![3.0, 4.0, 7.0]};
             let t2 = Tensor{data: vec![2.0, 2.0, 7.0]};
+            let expect = Tensor{data: vec![1.5, 2.0, 1.0]};
+            assert_eq!(expect, &t1 / &t2);
 
-            let rem = t1 % t2;
-            let expect  = Tensor{data: vec![1.0, 0.0, 0.0]};
-            assert_eq!(expect, rem);
-        }
+            assert_eq!(expect, &t1 / t2);
+            let t2 = Tensor{data: vec![2.0, 2.0, 7.0]};
+            assert_eq!(expect, t1 / &t2);
 
-        #[test]
-        fn div_int_test() {
-            let t1 = Tensor{data: vec![3, 4, 7]};
-            let t2 = Tensor{data: vec![2, 2, 7]};
-
-            let div = t1 / t2;
-            let expect  = Tensor{data: vec![1, 2, 1]};
-            assert_eq!(expect, div);
-        }
-
-        #[test]
-        fn div_float_test() {
             let t1 = Tensor{data: vec![3.0, 4.0, 7.0]};
             let t2 = Tensor{data: vec![2.0, 2.0, 7.0]};
+            assert_eq!(expect, t1 / t2);
+        }
 
-            let div = t1 / t2;
-            let expect  = Tensor{data: vec![1.5, 2.0, 1.0]};
-            assert_eq!(expect, div);
+        #[test]
+        fn mul_op_ref_combinations_tens_sca_test() {
+            let t1 = Tensor{data: vec![3.0, 4.0, 7.0]};
+            let expect = Tensor{data: vec![1.5, 2.0, 3.5]};
+            assert_eq!(expect, &t1 / 2.);
+            assert_eq!(expect, t1 / 2.);
+
+            let t1 = Tensor{data: vec![3.0, 4.0, 7.0]};
+            let expect = Tensor{data: vec![28.0, 21.0, 12.0]};
+            assert_eq!(expect, 84. / &t1);
+            assert_eq!(expect, 84. / t1);
         }
 
     }
