@@ -27,6 +27,10 @@ impl<T: TensorItem> Tensor<T> {
     pub fn len(&self) -> usize {
         self.data.len()
     }
+
+    pub fn iter(&self) -> Iter<'_, T> {
+        self.data.iter()
+    }
 }
 
 // Iterator Implementations
@@ -59,6 +63,11 @@ mod tests {
         // Use once
         for i in t {
             sum += i;
+        }
+
+        // And another time, meaning it is not consumed.
+        for j in t.iter() {
+            sum += j
         }
 
         // And another time, meaning it is not consumed.
@@ -98,9 +107,18 @@ mod tests {
 }
 
 // Operator implementations
-mod op {
+mod operators {
     use std::ops::{Add, Mul, Sub, Div, Rem};
     use crate::{TensorItem, Tensor};
+
+    impl<T: TensorItem> Mul for &Tensor<T> {
+        type Output = Tensor<T>;
+
+        fn mul(self, other: Self) -> Self::Output {
+            let data: Vec<T> = self.iter().zip(other.iter()).map(|(x, y)| *x * *y).collect();
+            Tensor { data }
+        }
+    }
 
     impl<T: TensorItem> Mul for Tensor<T> {
         type Output = Self;
@@ -135,6 +153,24 @@ mod op {
 
         fn add(self, other: Self) -> Self {
             let data: Vec<T> = self.into_iter().zip(other.into_iter()).map(|(x, y)| x + y).collect();
+            Tensor { data }
+        }
+    }
+
+    impl<T: TensorItem> Sub<T> for &Tensor<T> {
+        type Output = Tensor<T>;
+
+        fn sub(self, other: T) -> Self::Output {
+            let data: Vec<T> = self.into_iter().map(|x| *x - other).collect();
+            Tensor { data }
+        }
+    }
+
+    impl<T: TensorItem> Sub<T> for Tensor<T> {
+        type Output = Tensor<T>;
+
+        fn sub(self, other: T) -> Self::Output {
+            let data: Vec<T> = self.into_iter().map(|x| x - other).collect();
             Tensor { data }
         }
     }
