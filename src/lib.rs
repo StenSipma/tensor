@@ -4,12 +4,13 @@ use std::vec::IntoIter;
 use num::Num;
 
 pub mod stats;
+pub mod functions;
 
 // Abstract generic which every tensor item must satisfy
 pub trait TensorItem: Num + Copy + Sum + {}
 impl<T: Num + Copy + Sum> TensorItem for T {}
 
-#[derive(PartialEq, Debug)]
+#[derive(PartialEq, Debug, Clone)]
 pub struct Tensor<T: TensorItem> {
     data: Vec<T>,
 }
@@ -35,7 +36,19 @@ impl<T: TensorItem> Tensor<T> {
     pub fn iter(&self) -> Iter<'_, T> {
         self.data.iter()
     }
+
+    /// Iterate over the tensor in a row-major order. The desired shape of the
+    /// tensor is given in `shape` which should have size 2.
+    /// Moreover the following should be satisfied:
+    ///     shape[0]*shape[1] == tensor.len()
+    pub fn iter_2d(&self, shape: Vec<usize>) -> impl Iterator<Item = ((usize, usize), &T)> {
+        let coordinates = (0..shape[0])
+            .map(move |x| { (0..shape[1]).map(move |y| (x, y)) })
+            .flatten();
+        coordinates.zip(self.into_iter())
+    }
 }
+
 
 /// Implements the From trait to initialize a Tensor from a Vec of the same type
 impl<T: TensorItem> From<Vec<T>> for Tensor<T> {
@@ -139,6 +152,31 @@ mod tests {
         let t1: Tensor<f32> = vec![1., 2., 3., 4.].into();
         let t2 = Tensor{data: vec![1., 2., 3., 4.]};
         assert_eq!(t1, t2);
+    }
+
+    #[test]
+    fn iter_2d_test() {
+        let t = Tensor::from(vec![1, 2, 3, 4]);
+        let shape: Vec<usize> = vec![2, 2];
+        let mut it = t.iter_2d(shape);
+
+        assert_eq!(Some(((0, 0), &1)), it.next());
+        assert_eq!(Some(((0, 1), &2)), it.next());
+        assert_eq!(Some(((1, 0), &3)), it.next());
+        assert_eq!(Some(((1, 1), &4)), it.next());
+        assert_eq!(None, it.next());
+
+        let t = Tensor::from(vec![1, 2, 3, 4, 5, 6]);
+        let shape: Vec<usize> = vec![2, 3];
+        let mut it = t.iter_2d(shape);
+
+        assert_eq!(Some(((0, 0), &1)), it.next());
+        assert_eq!(Some(((0, 1), &2)), it.next());
+        assert_eq!(Some(((0, 2), &3)), it.next());
+        assert_eq!(Some(((1, 0), &4)), it.next());
+        assert_eq!(Some(((1, 1), &5)), it.next());
+        assert_eq!(Some(((1, 2), &6)), it.next());
+        assert_eq!(None, it.next());
     }
 }
 
