@@ -12,13 +12,14 @@ impl<T: Num + Copy + Sum> TensorItem for T {}
 #[derive(PartialEq, Debug)]
 pub struct Tensor<T: TensorItem> {
     data: Vec<T>,
+    dim: Vec<usize>,
 }
 
 impl<T: TensorItem> Tensor<T> {
 
     /// Create a new empty Tensor
     pub fn new() -> Self {
-        Self { data: Vec::new() }
+        Self { data: Vec::new(), dim: Vec::new() }
     }
 
     /// Gets the underlying Vec data from the tensor. This will consume the Tensor
@@ -31,16 +32,72 @@ impl<T: TensorItem> Tensor<T> {
         self.data.len()
     }
 
-    /// Iterate over the element of the Tensor
+    /// Returns the number of dimensions of the Tensor
+    pub fn ndim(&self) -> usize {
+        self.dim.len()
+    }
+
+    /// Set the new dimension sizes for the Tensor, modifies the Tensor in place
+    /// Will be None when the size of the new dimension does not match the existing 
+    /// data
+    pub fn set_dim(&mut self, dim: Vec<usize>) -> Option<()> {
+        // First check the if the dimension is correct:
+        let dim_len = {
+            let mut total = 1;
+            for d in &dim {
+                total *= d;
+            }
+            total
+        };
+
+        if dim_len != self.data.len() {
+            return None
+        }
+
+        // Update the dim vector with the new values
+        self.dim.clear();
+        self.dim.extend(dim);
+
+        Some(())
+    }
+
+    /// Iterate over the elements of the Tensor (flattened)
     pub fn iter(&self) -> Iter<'_, T> {
         self.data.iter()
+    }
+
+    pub fn index(&self, index: Vec<usize>) -> Option<T> {
+        if index.len() != self.dim.len() {
+            return None
+        }
+
+        // Check if each index is within bounds
+        for (a, b) in index.iter().zip(&self.dim) {
+            if a + 1 > *b {
+                return None
+            }
+        }
+
+        let mut data_index = 0;
+        for (n, idx) in index.iter().rev().enumerate() {
+            let dim_idx = self.dim.len() - (n + 1);
+
+            data_index *= self.dim[dim_idx];
+            data_index += idx
+        }
+        Some(self.data[data_index])
     }
 }
 
 /// Implements the From trait to initialize a Tensor from a Vec of the same type
 impl<T: TensorItem> From<Vec<T>> for Tensor<T> {
     fn from(v: Vec<T>) -> Self {
-        Self { data: v }
+        let dim = if v.len() == 0 {
+            Vec::new()
+        } else {
+            vec![v.len()]
+        };
+        Self { data: v, dim }
     }
 }
 
@@ -90,7 +147,8 @@ mod tests {
 
     #[test]
     fn iter_test() {
-        let t = &Tensor{data: vec![3.0, 4.0, 7.0]};
+        // let t = &Tensor{data: };
+        let t = &Tensor::from(vec![3.0, 4.0, 7.0]);
         let mut sum = 0.;
         // Use once
         for i in t {
@@ -112,10 +170,10 @@ mod tests {
 
     #[test]
     fn len_test() {
-        let t = Tensor{data: vec![1, 2, 3]};
+        let t = Tensor::from(vec![1, 2, 3]);
         assert_eq!(3, t.len());
 
-        let t: Tensor<i8> = Tensor{data: vec![]};
+        let t: Tensor<i8> = Tensor::from(Vec::new());
         assert_eq!(0, t.len());
     }
 
@@ -124,22 +182,87 @@ mod tests {
         let t: Tensor<i8> = Tensor::new();
         assert_eq!(t.data, vec![]);
         assert_eq!(0, t.len());
+
+        assert_eq!(0, t.ndim());
     }
 
     #[test]
     fn from_test() {
         let t1 = Tensor::from(vec![1, 2, 3, 4]);
-        let t2 = Tensor{data: vec![1, 2, 3, 4]};
+        let t2 = Tensor{data: vec![1, 2, 3, 4], dim: vec![4]};
         assert_eq!(t1, t2);
 
         let t1 = Tensor::from(vec![1., 2., 3., 4.]);
-        let t2 = Tensor{data: vec![1., 2., 3., 4.]};
+        let t2 = Tensor{data: vec![1., 2., 3., 4.], dim: vec![4]};
         assert_eq!(t1, t2);
 
         let t1: Tensor<f32> = vec![1., 2., 3., 4.].into();
-        let t2 = Tensor{data: vec![1., 2., 3., 4.]};
+        let t2 = Tensor{data: vec![1., 2., 3., 4.], dim: vec![4]};
         assert_eq!(t1, t2);
     }
+
+    #[test]
+    fn set_ndim_test() {
+        let t0 = Tensor::from(vec![1, 2, 3, 4]);
+        let mut t2 = Tensor::from(vec![1, 2, 3, 4]);
+        let res = t2.set_dim(vec![2, 2]);
+        assert_eq!(res, Some(()));
+
+        let res = t2.set_dim(vec![4]);
+        assert_eq!(res, Some(()));
+
+        assert_eq!(t0, t2);
+
+        // Invalid dimensions!
+        let res = t2.set_dim(vec![2, 1]);
+        assert_eq!(res, None);
+        let res = t2.set_dim(vec![5]);
+        assert_eq!(res, None);
+
+        assert_eq!(t0, t2);
+
+        let res = t2.set_dim(vec![1, 1, 1, 4]);
+        assert_eq!(res, Some(()));
+    }
+
+    #[test]
+    fn index_1d_test() {
+        // One dimension
+        let t1 = Tensor::from(vec![1, 2, 3, 4]);
+        assert_eq!(t1.index(vec![0]), Some(1));
+        assert_eq!(t1.index(vec![3]), Some(4));
+        assert_eq!(t1.index(vec![4]), None);
+    }
+
+    #[test]
+    fn index_0d_test() {
+        // Empty array will always be None
+        let t0: Tensor<i32> = Tensor::new();
+        assert_eq!(t0.index(vec![0]), None);
+    }
+
+    #[test]
+    fn index_2d_test() {
+        // Two dimensions
+        let mut t2 = Tensor::from(vec![1, 2, 3, 4]);
+        t2.set_dim(vec![2, 2]);
+
+        assert_eq!(t2.index(vec![0, 0]), Some(1));
+        assert_eq!(t2.index(vec![1, 0]), Some(2));
+        assert_eq!(t2.index(vec![0, 1]), Some(3));
+        assert_eq!(t2.index(vec![1, 1]), Some(4));
+        assert_eq!(t2.index(vec![0, 2]), None);
+    }
+
+    #[test]
+    fn index_nd_test() {
+        // Two dimensions
+        let mut tn = Tensor::from(vec![1, 2, 3, 4]);
+        tn.set_dim(vec![1, 1, 1, 1, 4]);
+
+        assert_eq!(tn.index(vec![0, 0, 0, 0, 2]), Some(3));
+    }
+
 }
 
 // Operator implementations
@@ -161,7 +284,7 @@ mod operators {
 
                 fn $trait_fn(self, other: $scalar_type) -> Self::Output {
                     let data: Vec<$scalar_type> = self.into_iter().map(|x| (*x).$trait_fn(other)).collect();
-                    Tensor { data }
+                    Tensor::from( data )
                 }
             }
 
@@ -171,7 +294,7 @@ mod operators {
 
                 fn $trait_fn(self, other: $scalar_type) -> Self::Output {
                     let data: Vec<$scalar_type> = self.into_iter().map(|x| x.$trait_fn(other)).collect();
-                    Tensor { data }
+                    Tensor::from( data )
                 }
             }
 
@@ -181,7 +304,7 @@ mod operators {
 
                 fn $trait_fn(self, other: &Tensor<$scalar_type>) -> Self::Output {
                     let data: Vec<$scalar_type> = other.into_iter().map(|x| self.$trait_fn(*x)).collect();
-                    Tensor { data }
+                    Tensor::from( data )
                 }
             }
 
@@ -191,7 +314,7 @@ mod operators {
 
                 fn $trait_fn(self, other: Tensor<$scalar_type>) -> Self::Output {
                     let data: Vec<$scalar_type> = other.into_iter().map(|x| self.$trait_fn(x)).collect();
-                    Tensor { data }
+                    Tensor::from( data )
                 }
             }
         };
@@ -237,7 +360,7 @@ mod operators {
 
                 fn $trait_fn(self, other: Self) -> Self::Output {
                     let data: Vec<T> = self.into_iter().zip(other.into_iter()).map(|(x, y)| (*x).$trait_fn(*y)).collect();
-                    Tensor { data }
+                    Tensor::from( data )
                 }
             }
 
@@ -247,7 +370,7 @@ mod operators {
 
                 fn $trait_fn(self, other: Tensor<T>) -> Self::Output {
                     let data: Vec<T> = self.into_iter().zip(other.into_iter()).map(|(x, y)| (*x).$trait_fn(y)).collect();
-                    Tensor { data }
+                    Tensor::from( data )
                 }
             }
 
@@ -257,7 +380,7 @@ mod operators {
 
                 fn $trait_fn(self, other: &Tensor<T>) -> Self::Output {
                     let data: Vec<T> = self.into_iter().zip(other.into_iter()).map(|(x, y)| x.$trait_fn(*y)).collect();
-                    Tensor { data }
+                    Tensor::from( data )
                 }
             }
 
@@ -267,7 +390,7 @@ mod operators {
 
                 fn $trait_fn(self, other: Self) -> Self {
                     let data: Vec<T> = self.into_iter().zip(other.into_iter()).map(|(x, y)| x.$trait_fn(y)).collect();
-                    Tensor { data }
+                    Tensor ::from( data )
                 }
             }
         };
@@ -323,29 +446,29 @@ mod operators {
 
         #[test]
         fn mul_op_ref_combinations_tens_tens_test() {
-            let t1 = Tensor{data: vec![3.0, 4.0, 7.0]};
-            let t2 = Tensor{data: vec![2.0, 2.0, 7.0]};
-            let expect = Tensor{data: vec![1.5, 2.0, 1.0]};
+            let t1 = Tensor::from(vec![3.0, 4.0, 7.0]);
+            let t2 = Tensor::from(vec![2.0, 2.0, 7.0]);
+            let expect = Tensor::from(vec![1.5, 2.0, 1.0]);
             assert_eq!(expect, &t1 / &t2);
 
             assert_eq!(expect, &t1 / t2);
-            let t2 = Tensor{data: vec![2.0, 2.0, 7.0]};
+            let t2 = Tensor::from(vec![2.0, 2.0, 7.0]);
             assert_eq!(expect, t1 / &t2);
 
-            let t1 = Tensor{data: vec![3.0, 4.0, 7.0]};
-            let t2 = Tensor{data: vec![2.0, 2.0, 7.0]};
+            let t1 = Tensor::from(vec![3.0, 4.0, 7.0]);
+            let t2 = Tensor::from(vec![2.0, 2.0, 7.0]);
             assert_eq!(expect, t1 / t2);
         }
 
         #[test]
         fn mul_op_ref_combinations_tens_sca_test() {
-            let t1 = Tensor{data: vec![3.0, 4.0, 7.0]};
-            let expect = Tensor{data: vec![1.5, 2.0, 3.5]};
+            let t1 = Tensor::from(vec![3.0, 4.0, 7.0]);
+            let expect = Tensor::from(vec![1.5, 2.0, 3.5]);
             assert_eq!(expect, &t1 / 2.);
             assert_eq!(expect, t1 / 2.);
 
-            let t1 = Tensor{data: vec![3.0, 4.0, 7.0]};
-            let expect = Tensor{data: vec![28.0, 21.0, 12.0]};
+            let t1 = Tensor::from(vec![3.0, 4.0, 7.0]);
+            let expect = Tensor::from(vec![28.0, 21.0, 12.0]);
             assert_eq!(expect, 84. / &t1);
             assert_eq!(expect, 84. / t1);
         }
