@@ -9,7 +9,7 @@ pub mod stats;
 pub trait TensorItem: Num + Copy + Sum + {}
 impl<T: Num + Copy + Sum> TensorItem for T {}
 
-#[derive(PartialEq, Debug)]
+#[derive(PartialEq, Debug, Clone)]
 pub struct Tensor<T: TensorItem> {
     data: Vec<T>,
     dim: Vec<usize>,
@@ -87,7 +87,21 @@ impl<T: TensorItem> Tensor<T> {
         }
         Some(self.data[data_index])
     }
+
+    /// TODO: use the internal ndim instead!!!!!!!!!!, also make it column major order!
+    ///
+    /// Iterate over the tensor in a row-major order. The desired shape of the
+    /// tensor is given in `shape` which should have size 2.
+    /// Moreover the following should be satisfied:
+    ///     shape[0]*shape[1] == tensor.len()
+    pub fn iter_2d(&self) -> impl Iterator<Item = ((usize, usize), &T)> {
+        let coordinates = (0..self.dim[0])
+            .map(move |x| { (0..self.dim[1]).map(move |y| (x, y)) })
+            .flatten();
+        coordinates.zip(self.into_iter())
+    }
 }
+
 
 /// Implements the From trait to initialize a Tensor from a Vec of the same type
 impl<T: TensorItem> From<Vec<T>> for Tensor<T> {
@@ -263,6 +277,32 @@ mod tests {
         assert_eq!(tn.index(vec![0, 0, 0, 0, 2]), Some(3));
     }
 
+    #[test]
+    fn iter_2d_test() {
+        let mut t = Tensor::from(vec![1, 2, 3, 4]);
+        let shape: Vec<usize> = vec![2, 2];
+        t.set_dim(shape);
+        let mut it = t.iter_2d();
+
+        assert_eq!(Some(((0, 0), &1)), it.next());
+        assert_eq!(Some(((0, 1), &2)), it.next());
+        assert_eq!(Some(((1, 0), &3)), it.next());
+        assert_eq!(Some(((1, 1), &4)), it.next());
+        assert_eq!(None, it.next());
+
+        let mut t = Tensor::from(vec![1, 2, 3, 4, 5, 6]);
+        let shape: Vec<usize> = vec![2, 3];
+        t.set_dim(shape);
+        let mut it = t.iter_2d();
+
+        assert_eq!(Some(((0, 0), &1)), it.next());
+        assert_eq!(Some(((0, 1), &2)), it.next());
+        assert_eq!(Some(((0, 2), &3)), it.next());
+        assert_eq!(Some(((1, 0), &4)), it.next());
+        assert_eq!(Some(((1, 1), &5)), it.next());
+        assert_eq!(Some(((1, 2), &6)), it.next());
+        assert_eq!(None, it.next());
+    }
 }
 
 // Operator implementations
